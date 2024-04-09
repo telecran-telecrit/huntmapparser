@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-# Author: interlark@gmail.com
-# Description: HuntMap.Ru Parser
-
 import json
 import logging
 import os
@@ -10,7 +7,6 @@ import time
 from collections import OrderedDict
 from glob import glob
 from shutil import rmtree
-from sys import platform
 
 import geojson
 from bs4 import BeautifulSoup
@@ -21,10 +17,15 @@ from shapely.ops import transform as shapely_transform
 
 logging.getLogger('seleniumwire').setLevel(logging.ERROR)
 
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
+import chromedriver_autoinstaller
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
 from seleniumwire import webdriver
+
+
+CHROME_DRIVER_PATH = chromedriver_autoinstaller.install(path='drivers')
 
 # Directories
 OUT_DIR = 'result'  # Директория для geojson файлов
@@ -50,6 +51,7 @@ SELECTOR_MAP_IFRAME = '#kosmosnimki > iframe'
 # Other
 GENERATE_MERGED_FILES = False
 GEOJSON_ENCODING = 'utf-8'
+
 
 def get_index_dict(driver):
     '''
@@ -80,10 +82,11 @@ def get_index_dict(driver):
 
         if elem_h2.name == 'h2' and elem_p.name == 'p' and elem_ul.name == 'ul':
             index_items[elem_h2.get_text()] = {a.get_text(): a['href'] for a in elem_ul.find_all('a')}
-        
+
         i += 1
 
     return index_items
+
 
 def parse_page(url, driver):
     '''
@@ -99,10 +102,13 @@ def parse_page(url, driver):
 
     # scroll to the map iframe, just in case...
     try:
-        driver.execute_script('arguments[0].scrollIntoView({behavior: "smooth"});', driver.find_element(By.CSS_SELECTOR, SELECTOR_MAP_IFRAME))
+        driver.execute_script(
+            'arguments[0].scrollIntoView({behavior: "smooth"});',
+            driver.find_element(By.CSS_SELECTOR, SELECTOR_MAP_IFRAME),
+        )
     except NoSuchElementException:
         pass  # no biggie
-    
+
     time.sleep(BROWSER_PAGE_WAIT)
 
     data_requests = [req for req in driver.requests if req.host == 'maps.kosmosnimki.ru'\
@@ -112,12 +118,12 @@ def parse_page(url, driver):
     for req in data_requests:
         try:
             resp = req.response.body.decode('utf8')
-            
+
             # remove jsonp wrapper
             while resp[0] != '(':
                 resp = resp[1:]
             resp = resp.strip('()')
-            
+
             data = json.loads(resp)
             data_responses[req.id] = data
         except json.JSONDecodeError:
@@ -128,11 +134,12 @@ def parse_page(url, driver):
 
     return data_responses
 
+
 def save_result(data, county, region, output_path):
     '''
     Сохранение промежуточных файлов.
 
-    :param data: Словарь со слоями и geojson features 
+    :param data: Словарь со слоями и geojson features
     :param county: Округ
     :param region: Регион
     :param output_path: Директория выходных файлов
@@ -160,6 +167,7 @@ def save_result(data, county, region, output_path):
         with open(all_merged_path, 'w', encoding=GEOJSON_ENCODING) as f_json:
             geojson.dump(all_features_collection, f_json, ensure_ascii=False)
 
+
 def merge_result(output_path):
     '''
     Компиляция промежуточных файлов в один.
@@ -174,6 +182,7 @@ def merge_result(output_path):
     all_feature_collection = geojson.FeatureCollection(all_features)
     with open(f'{output_path}/merged.geojson', 'w', encoding=GEOJSON_ENCODING) as f_compiled:
         geojson.dump(all_feature_collection, f_compiled, ensure_ascii=False)
+
 
 def build_geojson_features(docs):
     '''
@@ -194,7 +203,7 @@ def build_geojson_features(docs):
             layer_docs[k] = v
         else:
             meta_docs[k] = v
-    
+
     # let's get mapping between layers and attributs they contains inside
     def find_attrs(doc):
         if isinstance(doc, dict):
@@ -205,12 +214,12 @@ def build_geojson_features(docs):
                     for x in v:
                         if isinstance(x, (dict, list)):
                             find_attrs(x)
-            
+
             if 'LayerID' in doc and 'attributes' in doc and 'name' in doc and 'title' in doc:
                 # TODO: assert name == LayerID
                 attr_mapping[doc['name']] = doc['attributes']
                 title_mapping[doc['name']] = doc['title']
-                
+
         if isinstance(doc, list):
             for x in docs:
                 find_attrs(x)
@@ -228,12 +237,12 @@ def build_geojson_features(docs):
             layer_attr_names = attr_mapping[layer_name]
         else:
             layer_attr_names = [f'property_{x+1}' for x in range(128)]
-        
+
         geojson_features = []
 
         for v in doc['values']:
             v_properties = OrderedDict()  # for py < 3.7
-            v_geom = None 
+            v_geom = None
             for i, vv in enumerate(v, -1):
                 if i == -1:
                     continue  # skip index
@@ -243,7 +252,11 @@ def build_geojson_features(docs):
                     try:
                         geom = shape(vv)
                         if GEO_CONVERT_COORDINATES:
-                            project = Transformer.from_crs(f'EPSG:{GEO_SOURSE_SRS}', f'EPSG:{GEO_TARGET_SRS}', always_xy=True)
+                            project = Transformer.from_crs(
+                                f'EPSG:{GEO_SOURSE_SRS}',
+                                f'EPSG:{GEO_TARGET_SRS}',
+                                always_xy=True,
+                            )
                             geom = shapely_transform(project.transform, geom)
                         v_geom = shapely_mapping(geom)
                     except ValueError as e:
@@ -253,7 +266,7 @@ def build_geojson_features(docs):
 
             geo_feature = geojson.Feature(geometry=v_geom, properties=v_properties)
             geojson_features.append(geo_feature)
-        
+
         if layer_name not in layers:
             layers[layer_name] = []
 
@@ -285,16 +298,26 @@ def run(output_path):
         prefs = {"profile.managed_default_content_settings.images": 2}
         chrome_options.add_experimental_option("prefs", prefs)
 
+    chrome_service = Service(executable_path=CHROME_DRIVER_PATH)
     if BROWSER_HEADLESS:
         driver_options = Options()
         driver_options.add_argument('user-agent={}'.format(BROWSER_USER_AGENT))
         driver_options.add_argument("--headless")
 
-        driver = webdriver.Chrome(options=driver_options, chrome_options=chrome_options, seleniumwire_options=seleniumwire_options)
+        driver = webdriver.Chrome(
+            options=driver_options,
+            chrome_options=chrome_options,
+            seleniumwire_options=seleniumwire_options,
+            service=chrome_service,
+        )
     else:
-        driver = webdriver.Chrome(chrome_options=chrome_options, seleniumwire_options=seleniumwire_options)
+        driver = webdriver.Chrome(
+            chrome_options=chrome_options,
+            seleniumwire_options=seleniumwire_options,
+            service=chrome_service,
+        )
 
-    logging.info(f'Получение индекса карт...')
+    logging.info('Получение индекса карт...')
     index_dict = get_index_dict(driver)
 
     for county, regions in index_dict.items():
@@ -305,27 +328,18 @@ def run(output_path):
             save_result(data, county, region, output_path)
 
     if GENERATE_MERGED_FILES:
-        logging.info(f'Компиляция геоданных в один файл...')
+        logging.info('Компиляция геоданных в один файл...')
         merge_result(output_path)
 
-    logging.info(f'Работа завершена')
+    logging.info('Работа завершена')
 
 
 if __name__ == '__main__':
     here = os.path.abspath(os.path.dirname(__file__))
-
-    if platform == "linux" or platform == "linux2":  # Linux
-        os.environ['PATH'] += os.pathsep + os.path.join(here, 'drivers/linux64')
-    elif platform == "darwin":  # OS X
-        os.environ['PATH'] += os.pathsep + os.path.join(here, 'drivers/mac64')
-    elif platform == "win32":  # Windows
-        os.environ['PATH'] += os.pathsep + os.path.join(here, 'drivers/win32')
-    else:
-        raise OSError('ОС не определена')
-
     output_path = os.path.join(here, OUT_DIR)
+
     logging.basicConfig(level=logging.getLevelName('INFO'), format='[%(name)s] %(levelname)s: %(message)s')
-    logging.info(f'Запуск парсера HuntMap... (Based on Chrome 97.0)\nДиректория: {output_path}')
+    logging.info(f'Запуск парсера HuntMap... (Chrome based crawler)\nДиректория: {output_path}')
 
     if os.path.isdir(output_path):
         while True:
@@ -335,6 +349,5 @@ if __name__ == '__main__':
                 break
             elif ret.upper() == 'N':
                 exit(1)
-    
-    run(output_path)
 
+    run(output_path)

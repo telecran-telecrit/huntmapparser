@@ -8,7 +8,6 @@ with open(os.path.join(here, 'requirements.txt')) as f:
 setup(
     name='huntmap-parser',
     author_email='interlark@gmail.com',
-    version='0.1',
+    version='0.2',
     install_requires=install_requires
 )
-
