@@ -34,7 +34,8 @@ OUT_DIR = 'result'  # Директория для geojson файлов
 BROWSER_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.131 Safari/537.48'
 BROWSER_HEADLESS = False
 BROWSER_LOAD_IMAGES = True
-BROWSER_PAGE_WAIT = 15  # wait (secs) for all async requests on a map page get completed
+BROWSER_PAGE_WAIT = 30  # wait (secs) for all async requests on a map page get completed
+BROWSER_LAYERS_WAIT = 120
 
 # Конвертирование систем координат
 GEO_CONVERT_COORDINATES = True  # Флаг для конвертации координат (True - сконвертировать, False - оставить как есть)
@@ -110,6 +111,16 @@ def parse_page(url, driver):
         pass  # no biggie
 
     time.sleep(BROWSER_PAGE_WAIT)
+
+    # enable all layers on the map
+    iframe = driver.find_element(By.CSS_SELECTOR, "#kosmosnimki iframe")
+    driver.switch_to.frame(iframe)
+    driver.find_element(By.CSS_SELECTOR, 'div[data-tab-id="treeView"]').click()
+    driver.execute_script(
+        """document.querySelectorAll('div[data-pane-id="treeView"] input[class*="cmd:toggleVisibility"]:not(:checked)').forEach(layer => layer.click())"""
+    )
+
+    time.sleep(BROWSER_LAYERS_WAIT)
 
     data_requests = [req for req in driver.requests if req.host == 'maps.kosmosnimki.ru'\
         and req.path == '/TileSender.ashx' and req.response]
